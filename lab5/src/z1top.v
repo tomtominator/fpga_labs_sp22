@@ -1,38 +1,15 @@
 module z1top #(
-    parameter CLOCK_FREQ = 125_000_000,
-    parameter BAUD_RATE = 115_200,
-    /* verilator lint_off REALCVT */
-    // Sample the button signal every 500us
-    parameter integer B_SAMPLE_CNT_MAX = 0.0005 * CLOCK_FREQ,
-    // The button is considered 'pressed' after 100ms of continuous pressing
-    parameter integer B_PULSE_CNT_MAX = 0.100 / 0.0005
-    /* lint_on */
+    parameter CLOCK_FREQ = 100_000_000,
+    parameter BAUD_RATE = 1_000_000
 )(
-    input CLK_125MHZ_FPGA,
+    input CLK_100MHZ_FPGA,
     input [3:0] BUTTONS,
     input [1:0] SWITCHES,
     output [5:0] LEDS,
-    output AUD_PWM,
-    output AUD_SD,
     input FPGA_SERIAL_RX,
     output FPGA_SERIAL_TX
 );
-    wire [3:0] buttons_pressed;
-    button_parser #(
-        .WIDTH(4),
-        .SAMPLE_CNT_MAX(B_SAMPLE_CNT_MAX),
-        .PULSE_CNT_MAX(B_PULSE_CNT_MAX)
-    ) bp (
-        .clk(CLK_125MHZ_FPGA),
-        .in(BUTTONS),
-        .out(buttons_pressed)
-    );
-    assign AUD_PWM = 1'b0;
-    assign AUD_SD = 1'b0;
-
     wire rst;
-    assign rst = buttons_pressed[0];
-
     reg [7:0] data_in;
     wire [7:0] data_out;
     wire data_in_valid, data_in_ready, data_out_valid, data_out_ready;
@@ -42,9 +19,10 @@ module z1top #(
     // interface for this UART is used on the FPGA design.
     uart # (
         .CLOCK_FREQ(CLOCK_FREQ),
-        .BAUD_RATE(BAUD_RATE)
+        .BAUD_RATE(BAUD_RATE),
+        .WIDTH(8)
     ) on_chip_uart (
-        .clk(CLK_125MHZ_FPGA),
+        .clk(CLK_100MHZ_FPGA),
         .reset(rst),
         .data_in(data_in),
         .data_in_valid(data_in_valid),
@@ -62,16 +40,20 @@ module z1top #(
 
     // If a ASCII letter is received, its case will be reversed and sent back. Any other
     // ASCII characters will be echoed back without any modification.
+    // a = 97
     reg has_char;
     reg [7:0] char;
+    reg [31:0] past_4_bytes;
+    reg [1:0] i;
 
-    always @(posedge CLK_125MHZ_FPGA) begin
+    always @(posedge CLK_100MHZ_FPGA) begin
         if (rst) has_char <= 1'b0;
         else has_char <= has_char ? !data_in_ready : data_out_valid;
     end
 
-    always @(posedge CLK_125MHZ_FPGA) begin
+    always @(posedge CLK_100MHZ_FPGA) begin
         if (!has_char) char <= data_out;
+        if (has_char) past_4_bytes = {past_4_bytes[23:0], char};
     end
 
     always @ (*) begin

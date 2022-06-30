@@ -1,4 +1,4 @@
-module uart_receiver #(
+module uart_receiver_twm #(
     parameter CLOCK_FREQ = 100_000_000,
     parameter BAUD_RATE = 115_200,
     parameter WIDTH = 8)
@@ -6,7 +6,7 @@ module uart_receiver #(
     input clk,
     input reset,
 
-    output [WIDTH - 1:0] data_out,
+    output [WIDTH-1:0] data_out,
     output data_out_valid,
     input data_out_ready,
 
@@ -22,22 +22,18 @@ module uart_receiver #(
     wire start;
     wire rx_running;
 
-    reg [WIDTH + 1:0] rx_shift;
-    reg [$clog2(WIDTH):0] bit_counter;
+    reg [WIDTH + 1:0] bits_recieved; // TODO: make 1 bit shorter to avoid waste (never use the last bit when serial line goes back high)
+    reg [$clog2(WIDTH + 1):0] bit_counter;
     reg [CLOCK_COUNTER_WIDTH-1:0] clock_counter;
-    reg has_byte;
+    reg received_word;
 
     //--|Signal Assignments|------------------------------------------------------
 
     // Goes high at every symbol edge
-    /* verilator lint_off WIDTH */
     assign symbol_edge = clock_counter == (SYMBOL_EDGE_TIME - 1);
-    /* lint_on */
 
     // Goes high halfway through each symbol
-    /* verilator lint_off WIDTH */
     assign sample = clock_counter == SAMPLE_TIME;
-    /* lint_on */
 
     // Goes high when it is time to start receiving a new character
     assign start = !serial_in && !rx_running;
@@ -46,18 +42,19 @@ module uart_receiver #(
     assign rx_running = bit_counter != 0;
 
     // Outputs
-    assign data_out = rx_shift[WIDTH:1];
-    assign data_out_valid = has_byte && !rx_running;
+    assign data_out = bits_recieved[WIDTH:1];
+    assign data_out_valid = received_word && !rx_running;
 
-    //--|Counters|----------------------------------------------------------------
-
-    // Counts cycles until a single symbol is done
+    
     always @ (posedge clk) begin
+        // Sample Serial_in
+        if (sample && rx_running) bits_recieved <= {serial_in, bits_recieved[WIDTH + 1:1]};
+
+
+        // Counts cycles until a single symbol is done
         clock_counter <= (start || reset || symbol_edge) ? 0 : clock_counter + 1;
-    end
-
-    // Counts down from 10 bits for every character
-    always @ (posedge clk) begin
+    
+        // Counts down from WIDTH + 2 bits for every word recieved
         if (reset) begin
             bit_counter <= 0;
         end else if (start) begin
@@ -65,18 +62,11 @@ module uart_receiver #(
         end else if (symbol_edge && rx_running) begin
             bit_counter <= bit_counter - 1;
         end
-    end
-
-    //--|Shift Register|----------------------------------------------------------
-    always @(posedge clk) begin
-        if (sample && rx_running) rx_shift <= {serial_in, rx_shift[WIDTH + 1:1]};
-    end
-
-    //--|Extra State For Ready/Valid|---------------------------------------------
-    // This block and the has_byte signal aren't needed in the uart_transmitter
-    always @ (posedge clk) begin
-        if (reset) has_byte <= 1'b0;
-        else if (bit_counter == 1 && symbol_edge) has_byte <= 1'b1;
-        else if (data_out_ready) has_byte <= 1'b0;
+    
+    
+        // Ready/Valid Interface
+        if (reset) received_word <= 1'b0;
+        else if (bit_counter == 1 && symbol_edge) received_word <= 1'b1;
+        else if (data_out_ready) received_word <= 1'b0;
     end
 endmodule
